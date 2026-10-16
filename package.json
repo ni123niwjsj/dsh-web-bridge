@@ -1,0 +1,58 @@
+{
+  "name": "@ni123niwjsj/dsh-web-bridge",
+  "version": "0.1.0",
+  "description": "Serve the official DSH Web GUI on a second loopback origin so any IDE webview can embed it, and open files from the UI in your editor.",
+  "license": "MIT",
+  "type": "module",
+  "icon": "./icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ni123niwjsj/dsh-web-bridge.git"
+  },
+  "homepage": "https://github.com/ni123niwjsj/dsh-web-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/ni123niwjsj/dsh-web-bridge/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-bundle",
+    "dsh-plugin",
+    "webview",
+    "simple-browser",
+    "vscode",
+    "jetbrains",
+    "loopback",
+    "reverse-proxy"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}

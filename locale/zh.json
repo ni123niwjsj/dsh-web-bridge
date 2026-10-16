@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DSH Web 桥接",
+    "description": "在第二个 loopback 源上提供这套 DSH Web 界面，让任何 IDE 的内嵌浏览器（VS Code Simple Browser、JetBrains 及各种分支）都能嵌进来；可选支持点击文件在编辑器里打开。"
+  }
+}

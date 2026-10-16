@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="DSH Web Bridge">
+  <g fill="none" stroke="#4D6BFE" stroke-width="4" stroke-linecap="round">
+    <path d="M10 20h44M10 44h44"/>
+    <path d="M20 10v44M44 10v44"/>
+  </g>
+  <circle cx="20" cy="20" r="6" fill="#4D6BFE"/>
+  <circle cx="44" cy="44" r="6" fill="#4D6BFE"/>
+</svg>

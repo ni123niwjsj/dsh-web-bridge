@@ -1,0 +1,19 @@
+# dsh-web-bridge bundle layer.
+#
+# One row: the Host half opens a second loopback origin that serves the same Web
+# GUI for any IDE webview, and (optionally) opens files from the UI in the
+# editor. Edit the values below, or use the row's configuration page in
+# Settings → Plugins.
+- insert:
+    - id: dsh-web-bridge
+      name: '@ni123niwjsj/dsh-web-bridge'
+      config:
+        port: 39977
+        upstream: 127.0.0.1:3080
+        roots: []
+        injectClickScript: true
+        decorate: true
+        hijackChip: off
+        autoStart: true
+        openCommand: code
+        launchMode: auto

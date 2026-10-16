@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DSH Web Bridge",
+    "description": "Serve this DSH Web GUI on a second loopback origin so any IDE webview (VS Code Simple Browser, JetBrains, forks) can embed it, with optional click-to-open in your editor."
+  }
+}
