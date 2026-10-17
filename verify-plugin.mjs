@@ -101,12 +101,9 @@ const onFatal = (line) => {
 process.on("uncaughtException", (error) => onFatal(`uncaughtException: ${error?.code ?? error?.message}`));
 process.on("unhandledRejection", (error) => onFatal(`unhandledRejection: ${error?.code ?? error?.message ?? error}`));
 
-const results = [];
-const check = (name, ok, detail = "") => {
-  results.push([name, ok]);
-  console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}`);
-};
+import { createChecks } from "./verify-support.mjs";
 
+const { results, check, summary } = createChecks();
 const index = await fetch(bridge.url, { headers: asNavigation });
 const html = await index.text();
 check("a navigation (no origin, as a browser tab or IDE webview sends) returns 200", index.status === 200, String(index.status));
@@ -251,8 +248,4 @@ await bridge.close();
 await new Promise((resolve) => setTimeout(resolve, 300));
 check("nothing the bridge did reached a fatal process-level handler", fatal.length === 0, JSON.stringify(fatal));
 
-const failed = results.filter(([, ok]) => !ok).length;
-console.log(failed === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${failed}/${results.length} 项`);
-// `process.exitCode` is honoured as well: a fatal event recorded by the handlers above
-// must never be reported as success just because every check happened to pass.
-process.exit(failed === 0 && process.exitCode !== 1 ? 0 : 1);
+process.exit(summary() === 0 && process.exitCode !== 1 ? 0 : 1);

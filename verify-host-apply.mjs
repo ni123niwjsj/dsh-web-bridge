@@ -9,11 +9,9 @@ import { apply, buildConfig, deriveToken, isVolatileRef, liveRoots, readRowSetti
 import { loadHarness, loadSettingsProjection } from "./verify-support.mjs";
 import { readFileSync } from "node:fs";
 
-const results = [];
-const check = (name, ok, detail = "") => {
-  results.push([name, ok]);
-  console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}`);
-};
+import { createChecks } from "./verify-support.mjs";
+
+const { results, skipped, check, skip, summary } = createChecks();
 /**
  * Record a check that could not run.
  *
@@ -23,11 +21,7 @@ const check = (name, ok, detail = "") => {
  * settings page is empty). A skip is now counted, reported, and fatal unless
  * `ALLOW_SKIP=1` says the caller knows the Harness is absent.
  */
-const skipped = [];
-const skip = (name) => {
-  skipped.push(name);
-  console.log(`  ⏭  ${name} (not available on this machine)`);
-};
+
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 /**
@@ -413,5 +407,4 @@ if (skipped.length > 0) {
     process.exit(2);
   }
 }
-console.log(failed === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${failed}/${results.length} 项`);
-process.exit(failed === 0 ? 0 : 1);
+process.exit(summary() === 0 ? 0 : 1);

@@ -44,13 +44,23 @@ const scopeCandidates = () => {
  * Six copies had drifted in formatting, and one of them silently dropped skipped checks.
  * One implementation means one summary shape, one exit-code rule, and no suite that
  * "passes" while printing nothing.
- * @returns `{ results, check, failed, summary }`; `summary()` also returns the failure count.
+ * @returns `{ results, skipped, check, skip, failed, summary }`; `summary()` returns the failure count.
  */
 export const createChecks = () => {
   const results = [];
+  const skipped = [];
   const check = (name, ok, detail = "") => {
     results.push([name, Boolean(ok)]);
     console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}`);
+  };
+  /**
+   * Record a check that could not run. It is NOT counted as a pass: a suite that quietly
+   * skips its reason for existing reports success it did not earn (that is exactly how
+   * the volatile-marking check hid on a machine without the Harness).
+   */
+  const skip = (name) => {
+    skipped.push(name);
+    console.log(`  ⏭  ${name} (not available on this machine)`);
   };
   const failed = () => results.filter(([, ok]) => !ok).length;
   const summary = () => {
@@ -58,7 +68,7 @@ export const createChecks = () => {
     console.log(bad === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${bad}/${results.length} 项`);
     return bad;
   };
-  return { results, check, failed, summary };
+  return { results, skipped, check, skip, failed, summary };
 };
 
 /** A port that was free a moment ago: bind :0, read it back, release it. */

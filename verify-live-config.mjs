@@ -15,11 +15,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { apply } from "./lib/index.js";
 
-const results = [];
-const check = (name, ok, detail = "") => {
-  results.push([name, ok]);
-  console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}`);
-};
+import { createChecks } from "./verify-support.mjs";
+
+const { results, check, summary } = createChecks();
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A free loopback port. */
@@ -373,6 +371,4 @@ check("turning it back on restarts it on the live port", await listening(second)
   check("unloading the plugin closes the bridge", (await listening(port)) === false);
 }
 
-const failed = results.filter(([, ok]) => !ok).length;
-console.log(failed === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${failed}/${results.length} 项`);
-process.exit(failed === 0 ? 0 : 1);
+process.exit(summary() === 0 ? 0 : 1);

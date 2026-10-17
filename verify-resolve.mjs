@@ -18,12 +18,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { findAnchor, peek, scanOneLevel, startBridge } from "./lib/bridge.js";
 
-const results = [];
-const check = (name, ok, detail = "") => {
-  results.push([name, ok]);
-  console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}`);
-};
+import { createChecks } from "./verify-support.mjs";
 
+const { results, check, summary } = createChecks();
 const freePort = () =>
   new Promise((done, fail) => {
     const server = createHttp();
@@ -337,6 +334,4 @@ write(join(scratch, name("PLAIN", "txt")), "not a match\n");
 // only lasting side effect (ten of them per run across all suites, see docs/TODO.md).
 rmSync(scratch, { recursive: true, force: true });
 
-const failed = results.filter(([, ok]) => !ok).length;
-console.log(failed === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${failed}/${results.length} 项`);
-process.exit(failed === 0 ? 0 : 1);
+process.exit(summary() === 0 ? 0 : 1);
