@@ -13,6 +13,8 @@
         roots: []
         injectClickScript: true
         decorate: true
+        anchorPrompt: true
+        diffModifier: alt
         hijackChip: off
         autoStart: true
         openCommand: code

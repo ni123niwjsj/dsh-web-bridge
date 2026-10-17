@@ -12,7 +12,7 @@ import { createServer as createHttp } from "node:http";
 import { execFileSync } from "node:child_process";
 import { connect } from "node:net";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,7 +127,10 @@ write(join(scratch, name("PLAIN", "txt")), "not a match\n");
 // --------------------------------------------------- end to end via the bridge
 {
   const upstreamPort = await freePort();
-  const upstream = createHttp((_req, res) => {
+  /** Every request the fake upstream saw: its headers and the target it was asked for. */
+  const seenUpstream = [];
+  const upstream = createHttp((req, res) => {
+    seenUpstream.push({ headers: req.headers, url: req.url });
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end("<html><head><title>up</title></head><body>ok</body></html>");
   });
@@ -251,6 +254,7 @@ write(join(scratch, name("PLAIN", "txt")), "not a match\n");
 
   await bridge.close();
 
+  // ---- what must never travel upstream
   // ---- the diff is a REAL diff, launched exactly once
   // A fake editor records its argv, so the assertion is on what actually ran rather
   // than on what the reply claims. (The old code ran the plain open and then the same
@@ -286,9 +290,38 @@ write(join(scratch, name("PLAIN", "txt")), "not a match\n");
     body: JSON.stringify({ file: join(repo, "tracked.txt") }),
   })).json();
   check("a diff request really passes --diff with the HEAD snapshot", diffReply.mode === "diff" && String(diffReply.command).includes("--diff") && String(diffReply.command).includes("HEAD-"), JSON.stringify(diffReply.command));
+  // A SECOND diff of the same file: the snapshot name used to be fixed, so `wx` made this
+  // fail with EEXIST and the reply silently degraded to a plain open.
+  const diffAgain = await (await fetch(new URL("/__bridge/diff", diffBridge.url), {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-bridge-token": token },
+    body: JSON.stringify({ file: join(repo, "tracked.txt") }),
+  })).json();
+  check("a second diff of the SAME file is still a real diff", diffAgain.mode === "diff" && String(diffAgain.command).includes("--diff"), JSON.stringify({ mode: diffAgain.mode, note: diffAgain.note, error: diffAgain.error }));
+  check("...with its own snapshot, not the previous one", diffAgain.headFile !== diffReply.headFile, JSON.stringify({ first: diffReply.headFile, second: diffAgain.headFile }));
+
   const launches = readFileSync(argvLog, "utf8").trim().split("\n").filter(Boolean);
-  check("...and launches the editor exactly once", launches.length === 1, JSON.stringify(launches));
-  check("...with the snapshot first and the working file last", /--diff\s+\S*HEAD-\S*\s+\S*tracked\.txt$/u.test(launches[0] ?? ""), JSON.stringify(launches[0]));
+  check("...and launches the editor exactly once per request", launches.length === 2, JSON.stringify(launches));
+  check("...with the snapshot first and the working file last", launches.every((line) => /--diff\s+\S*HEAD-\S*\s+\S*tracked\.txt$/u.test(line)), JSON.stringify(launches));
+  // ---- 批次 3:不该上游看到的东西,以及"只清旧快照"这条规则
+  // 用此刻还活着的那台(diffBridge):主桥在这一段之前已经关闭
+  await fetch(diffBridge.url, { headers: { "x-bridge-token": token } });
+  const lastSeen = seenUpstream.at(-1);
+  check("the bridge never forwards its own request token upstream", lastSeen?.headers["x-bridge-token"] === undefined, JSON.stringify(Object.keys(lastSeen?.headers ?? {}).filter((k) => k.includes("token"))));
+  check("...while still injecting the session cookie", typeof lastSeen?.headers.cookie === "string" && lastSeen.headers.cookie.length > 0);
+
+  // 只清"旧"快照:把上一份的 mtime 拨旧,再请求一次 diff,它应当被清掉,而新发出去的那份必须还在
+  const aged = String(diffReply.headFile ?? "");
+  const longAgo = new Date(Date.now() - 10 * 60 * 1000);
+  utimesSync(aged, longAgo, longAgo);
+  await (await fetch(new URL("/__bridge/diff", diffBridge.url), {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-bridge-token": token },
+    body: JSON.stringify({ file: join(repo, "tracked.txt") }),
+  })).json();
+  check("an aged snapshot is pruned by the next diff", existsSync(aged) === false, aged);
+  check("...while the snapshot just handed out survives", existsSync(String(diffAgain.headFile ?? "")) === true, String(diffAgain.headFile));
+
   // The scratch root is a per-instance promise: it must be gone once the bridge is.
   const scratchRoot = dirname(String(diffReply.headFile ?? ""));
   check("the HEAD snapshot lives under a per-instance scratch root", scratchRoot.includes("dsh-web-bridge-"), scratchRoot);

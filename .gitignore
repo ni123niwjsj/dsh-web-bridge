@@ -40,6 +40,6 @@ tmp/
 
 # ---------------------------------------------------------------------------
 # NOT ignored on purpose: verify-*.mjs. They are the regression suite (131
-# checks) and the evidence that this plugin works; package.json's `files` list
+# checks, see README) and the evidence that this plugin works; package.json's `files` list
 # already keeps them out of the published tarball.
 # ---------------------------------------------------------------------------

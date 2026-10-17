@@ -38,7 +38,8 @@ const readSecret = (dshHome = process.env.DSH_HOME || join(homedir(), ".dsh")) =
 
 const port = Number(process.argv[2] ?? 39989);
 const token = "verify-token";
-const bridge = await startBridge({
+let bridge;
+bridge = await startBridge({
   port,
   upstream: "127.0.0.1:3080",
   roots: [process.cwd()],
@@ -79,8 +80,26 @@ const rawRequest = (targetPort, text) =>
 // DSH answers an unhandled rejection or uncaught exception with process.exit(1), so
 // the suite records both and asserts at the end that nothing ever reached them.
 const fatal = [];
-process.on("uncaughtException", (error) => fatal.push(`uncaughtException: ${error?.code ?? error?.message}`));
-process.on("unhandledRejection", (error) => fatal.push(`unhandledRejection: ${error?.code ?? error?.message ?? error}`));
+/**
+ * Record a fatal event, and make sure it is fatal to THIS PROCESS too.
+ *
+ * Installing these listeners is what lets the suite assert "nothing the bridge did
+ * reached a process-level handler" — but a listener also *suppresses* node's default
+ * non-zero exit, so without the two lines below a crash anywhere after this point
+ * would end the run with exit 0 (or hang on the bridge's still-open listener) and CI
+ * would read that as a pass.
+ */
+const onFatal = (line) => {
+  fatal.push(line);
+  process.exitCode = 1;
+  try {
+    void bridge?.close?.();
+  } catch {
+    /* the socket may already be gone; the exit code is what matters */
+  }
+};
+process.on("uncaughtException", (error) => onFatal(`uncaughtException: ${error?.code ?? error?.message}`));
+process.on("unhandledRejection", (error) => onFatal(`unhandledRejection: ${error?.code ?? error?.message ?? error}`));
 
 const results = [];
 const check = (name, ok, detail = "") => {
@@ -170,6 +189,37 @@ const probeUpgrade = (targetPort, path, extraHeaders = {}) =>
     setTimeout(() => done(buffer.split("\r\n")[0] || "timeout"), 8000).unref?.();
   });
 
+// The proxy path injects the operator's session cookie into whatever it forwards, so a
+// state-changing request has to come from a browser context we can recognise. A browser
+// always sends Origin on a request that is neither GET nor HEAD, so this costs the
+// embedded page nothing and closes "any local process with the right Host header".
+const originlessPost = await fetch(new URL("/api/nope", bridge.url), {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: "{}",
+});
+check("a state-changing proxy request without an Origin is refused", originlessPost.status === 403, String(originlessPost.status));
+
+const crossSiteSubresource = await fetch(bridge.url, { headers: { "sec-fetch-site": "cross-site", "sec-fetch-dest": "empty", "sec-fetch-mode": "no-cors" } });
+check("a cross-site subresource read is refused", crossSiteSubresource.status === 403, String(crossSiteSubresource.status));
+
+const crossSiteDocument = await fetch(bridge.url, { headers: { "sec-fetch-site": "cross-site", "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" } });
+check("...while a cross-site DOCUMENT navigation still loads (the IDE page can never be locked out)", crossSiteDocument.status === 200, String(crossSiteDocument.status));
+
+// The diagnostic routes authenticate with the token, and a token IS a credential, so a
+// terminal must keep working without pretending to be a browser.
+const originlessReport = await fetch(new URL("/__bridge/report", bridge.url), {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-bridge-token": token },
+  body: JSON.stringify({ found: {}, chain: [] }),
+});
+check("the diagnostic routes stay usable from a terminal (token, no Origin)", originlessReport.status === 200, String(originlessReport.status));
+
+// An absolute-form target addresses a different authority than the one this bridge was
+// asked for; forwarding it verbatim is how a proxy becomes a smuggling/SSRF primitive.
+const absoluteForm = await rawRequest(port, `GET http://evil.example/x HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`);
+check("an absolute-form request target is refused", absoluteForm.includes("400"), absoluteForm.slice(0, 40));
+
 // The upgrade path is where the fence matters most: browsers apply no CORS to a
 // WebSocket handshake, so an unchecked proxy hands the session mux to any page.
 const ownUpgrade = await probeUpgrade(port, "/api/remote.mux", { Origin: OWN });
@@ -203,4 +253,6 @@ check("nothing the bridge did reached a fatal process-level handler", fatal.leng
 
 const failed = results.filter(([, ok]) => !ok).length;
 console.log(failed === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${failed}/${results.length} 项`);
-process.exit(failed === 0 ? 0 : 1);
+// `process.exitCode` is honoured as well: a fatal event recorded by the handlers above
+// must never be reported as success just because every check happened to pass.
+process.exit(failed === 0 && process.exitCode !== 1 ? 0 : 1);

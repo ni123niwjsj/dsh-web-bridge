@@ -113,7 +113,10 @@ dsh plugin --profile web add link:$PWD
 两个已知的边界，都是刻意的：
 
 - **一段话中间夹着的路径不认**（要求整段文字就是路径）。规则是被真实误报逼紧的：状态行的 `168 tok/s69.3M tok` 差点被当成文件。
-- **空格与非 ASCII 都认了**：路径段允许**非 ASCII 字母**（`测试清单.md`）和**单个空格**（`dsh workspace`）；属性通道里空格只允许出现在**第二个及以后的段**，否则前面的散文会被吸进路径（`Read src/api/server.ts` 会从 `Read` 开始匹配）。守门的是另一条更硬的规则：**点号后第一个字符必须是字母** —— 这就是 `168 tok/s69.3M tok` 仍然被拒的原因。
+- **空格与非 ASCII 都认了**：路径段允许**非 ASCII 字母**（`测试清单.md`）和**单个空格**（`dsh workspace`）；属性通道里空格只允许出现在**第二个及以后的段**，否则前面的散文会被吸进路径（`Read src/api/server.ts` 会从 `Read` 开始匹配）。
+- **整段文字必须"只有一个来源"**：`textContent` 是所有后代文字**拼起来**的，所以往上找祖先时可能拼出假路径。DSH 查看器的标签条就是这么坑过一次 —— 它把 `hello.html`（标签）+ `/home/dev/hello.html`（面包屑）+ `HTML`（语言徽标）拼成 `hello.html/home/dev/hello.htmlHTML`，在那一片区域**点哪都报 no such file**。现在只接受"文字来自单一来源"的元素（叶子，或只套一层包装），拼接串一律拒绝。
+- **点文件也认**：`/tmp/x/.gitignore` 这种"最后一段整个是扩展名"的路径以前不认（形状要求"名字 + `.扩展名`"），现在认了。
+- 守门的是另外两条：**点号后第一个字符必须是字母**（`168 tok/s69.3M tok` 因此被拒），以及上面的"单一来源"。扩展名长度本身**不再是判据**（放宽到 16）。
 - **子目录回退只扫一层**：`<root>/*/path` 能命中，`<root>/*/*/path` 不能。两层会让误判面积变大，等真遇到再加。
 
 另外，**DSH 自己的胶囊是另一条路**：它的解析是逐字的（token 必须完全等于本轮产出过的路径，或等于其中某个文件唯一的 basename），带 `:399` 这种后缀就不会变成胶囊；而且它点开的是 DSH 自己的预览标签页，那个接口只接路径、**不接行号**。所以"能不能跳到第几行"这件事，可靠的那条路始终是注入脚本这一条。
@@ -172,7 +175,7 @@ DSH 的 `/api` 入口要求 `Host` 是 loopback 或受信 authority、拒绝 `Se
 
 **这一版修掉了什么（外部代码审查之后）**
 
-- **桥接现在有自己的栅栏**：`Host` 必须是 `127.0.0.1:<端口>` / `localhost:<端口>`，带**外部 `Origin`** 的请求一律 403 —— **HTTP 与 WebSocket 升级都查**(浏览器在 WS 握手上一定会带 `Origin`,而 WS 没有 CORS 保护)。没有 `Origin` 的请求是导航/子资源,放行:它读不到任何响应内容,而 DNS rebinding 由上面那条 `Host` 规则挡住。此前升级那条路不做任何检查就把 `Origin`/`Sec-Fetch-Site` 抹掉转发上游，而 DSH 的栅栏认为"没有 Origin 就可信"，于是**任意网页都能以你的身份连上 `/api/remote.mux`**；畸形 `Host` 也能在请求监听器里同步抛异常，被 DSH 的 fail-loud 变成 `process.exit(1)`。现在监听器整体有 try/catch，处理链有 `.catch`，非法 `openCommand` 返回失败而不是抛，请求体有上限且容忍中断 —— **任何失败都只降级成告警/500，不会带走会话**。
+- **桥接现在有自己的栅栏**：`Host` 必须是 `127.0.0.1:<端口>` / `localhost:<端口>`；带**外部 `Origin`**、或 `Sec-Fetch-Site: cross-site` 的子资源请求一律 403（跨站的**文档导航**仍放行 —— 一条链接或粘贴的地址永远不会把 IDE 自己的页面锁在门外）—— **HTTP 与 WebSocket 升级都查**(浏览器在 WS 握手上一定会带 `Origin`,而 WS 没有 CORS 保护)。没有 `Origin` 的请求是导航/子资源,放行:它读不到任何响应内容,而 DNS rebinding 由上面那条 `Host` 规则挡住。此前升级那条路不做任何检查就把 `Origin`/`Sec-Fetch-Site` 抹掉转发上游，而 DSH 的栅栏认为"没有 Origin 就可信"，于是**任意网页都能以你的身份连上 `/api/remote.mux`**；畸形 `Host` 也能在请求监听器里同步抛异常，被 DSH 的 fail-loud 变成 `process.exit(1)`。现在监听器整体有 try/catch，处理链有 `.catch`，非法 `openCommand` 返回失败而不是抛，请求体有上限且容忍中断 —— **任何失败都只降级成告警/500，不会带走会话**。
 - **token 回归它本来的角色**（CSRF）：只认请求头，不再接受查询串（那会进历史、日志和 `Referer`）；启动时校验 token 非空（此前两边都是 `undefined` 时会被判为通过）。
 - **diff 是真的了**：此前从未传 `--diff`，而且 Alt+点击会把同一条命令**开两次**（独立版一直是对的）。现在是一条 `code -r --diff <HEAD 快照> <文件>`，失败才降级为普通打开。
 - **不再泄漏监听器**：`start()`/`adopt()` 走同一条串行队列（此前 `start()` 只在 `handle` 上设防，而它两个 await 之后才赋值，连存两次端口会留下多个仍在监听的服务器）。
@@ -206,21 +209,36 @@ DSH 的 `/api` 入口要求 `Host` 是 loopback 或受信 authority、拒绝 `Se
 
 ```bash
 for f in lib/*.js; do node --check "$f"; done   # 注意要一个一个查
-node verify-click-match.mjs    # 识别（锚点、中文、空格）+ token 自愈 + 外观 + toast + 接管三态与交还（89 项）
+
+# CI（.github/workflows/checks.yml）跑的是**不需要活 DSH** 的三个：
+#   verify-click-match · verify-config-page · verify-resolve
+# 另外三个要在本机跑：verify-host-apply 需要真的 schemastery/dsh-settings，
+# verify-live-config 与 verify-plugin 需要跑着的 DSH 与 $DSH_HOME/.credentials.yaml。
+node verify-click-match.mjs    # 识别（锚点、中文、空格、点文件、拼接串拒绝）+ token 自愈 + 外观 + toast + 接管三态与交还（96 项）
 node verify-host-apply.mjs     # 宿主半边：volatile 标记、settings 门、就地读值、会话 root、token 派生、提示词段（35 项）
 node verify-resolve.mjs        # 解析、回显、锚点、页面配置注入、真 diff 只启动一次、临时目录关闭即删（49 项）
 node verify-live-config.mjs    # 真实桥接：改端口/开关、相对路径、token 跨重挂、连存不泄漏监听器（24 项）
 node verify-config-page.mjs    # 客户端两个座位、写操作、控件配色（33 项）
 node verify-plugin.mjs 39989   # 桥接本体：自己的栅栏、致命路径、自检（22 项，需要活着的 DSH）
 node verify-support.mjs        # 自检：能否找到宿主自带的 schemastery / dsh-settings
-# 合计 252 项
+# 合计 281 项
 ```
 
-验证脚本（含 `verify-support.mjs`）不在 `files` 里，不会随包发布。`lib/bridge.js` 与 `dsh-bridge/dsh-bridge-proxy.mjs` 是同一份逻辑的两个形态（插件内 / 独立进程），改动需同步；**唯一的刻意差异**是前者接受一个 `roots` 提供函数（好拿到活动会话的工作目录），后者没有会话存储可问，只能靠 `--root`。
+验证脚本（含 `verify-support.mjs`）不在 `files` 里，不会随包发布。`lib/bridge.js` 与 `dsh-bridge/dsh-bridge-proxy.mjs` 是同一份逻辑的两个形态（插件内 / 独立进程），改动需同步 —— 但它们**并不等同**：独立版是**功能子集**。它缺：`roots` 提供函数（没有会话存储可问，只能靠 `--root`，也不会加 `$HOME`）、锚点与 `#L`/`:行号` 后缀、一层目录回退、回复里的 `resolvedBy`/`root`/`candidates`，以及 `bridge-client.js` 里最新的识别规则（移植已排期）。反过来，插件没有 `/__bridge/test` 与 `/__bridge/token`。
 
 </details>
 
-**运行时不变量：** 插件只监听 loopback，并且**只认自己的源**（`Host` 必须是自己，外部 `Origin`/cross-site 一律 403，HTTP 与 WebSocket 一视同仁）；卸载即随 `ctx.effect` 关闭；不新增任何持久状态；唯一写盘的是下面那个临时根目录。
+**运行时不变量：** 插件只监听 loopback，并且**只认自己的源**：
+
+- `Host` 必须是它自己的名字（这条挡的是 DNS rebinding）；
+- 带外部 `Origin` 的请求：HTTP 与 WebSocket 升级**都** 403；
+- `Sec-Fetch-Site: cross-site` 的**子资源**拒绝；跨站**文档导航**放行，所以 IDE 的页面永远不会被锁在自己的桥接外面；
+- **代理路径**上，改状态的请求（GET/HEAD 之外）必须带本桥接自己的 `Origin` —— 浏览器一定会带，而这条正是挡住"本机进程零凭据驱动完整 GUI API"的关键：代理会把操作员的会话 cookie 注入它转发的每一个请求，所以这道检查就是全部边界。`/__bridge/*` 诊断接口**刻意豁免**：它们用 token 认证，而 token 是凭据（`curl -H "x-bridge-token: …"` 照旧可用）。
+  **token 到底是什么**：诊断接口需要它，而 `/__bridge/open` 会回带目标行的**文本** —— 所以一个 token 实质上等于「在这台机器上逐行读取任意文件」，而且它被内联进桥接服务的每个页面。请把它当**文件读取凭据**看待，而不是单纯的 CSRF 防护。
+
+**残余风险也直说**：**别的用户的**本机进程可以伪造 `Origin`，所以在多人机器上这个 loopback 监听仍是一条提权路径 —— 它读不到你的 `~/.dsh` 凭据，但能用这个端口。单用户机器不受影响。
+
+此外：（`Host` 必须是自己，外部 `Origin`/cross-site 一律 403，HTTP 与 WebSocket 一视同仁）；卸载即随 `ctx.effect` 关闭；不新增任何持久状态；唯一写盘的是下面那个临时根目录。
 
 **关于 token（一个曾经的真实故障）：** 桥接接口用的 token 由那把持久的 signing secret **派生**（`deriveToken`），不是每次激活随机生成 —— 因为页面会比桥接活得久：重启 DSH 会重挂插件，而已加载的文档只能靠**重新加载**才能拿到新 token，其余一切（走代理的 UI）都不受影响，于是症状就是"界面好好的、每次点击都静默 403"。派生之后，同一个 harness home 永远算出同一把 token，跨重启、跨重挂、跨插件升级都稳定。代价是它不能单独轮换（要轮就轮 DSH 的浏览器会话 secret）。注入脚本另外带一层自愈：遇到 403 先就地重读本文档的 HTML 换新 token 重试一次，换不到才刷新页面一次（20 秒冷却，避免死循环）。
 

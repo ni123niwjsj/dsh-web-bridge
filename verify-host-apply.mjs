@@ -7,13 +7,27 @@
 //   node verify-host-apply.mjs
 import { apply, buildConfig, deriveToken, isVolatileRef, liveRoots, readRowSettings } from "./lib/index.js";
 import { loadHarness, loadSettingsProjection } from "./verify-support.mjs";
+import { readFileSync } from "node:fs";
 
 const results = [];
 const check = (name, ok, detail = "") => {
   results.push([name, ok]);
   console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}`);
 };
-const skip = (name) => console.log(`  ⏭  ${name} (not available on this machine)`);
+/**
+ * Record a check that could not run.
+ *
+ * Skipping used to be invisible: the run still said "全部通过" and exited 0, while the
+ * skipped check was the one this suite exists for ("every Config field is marked
+ * volatile" — without the mark, `dsh-settings` projects no namespace and the whole
+ * settings page is empty). A skip is now counted, reported, and fatal unless
+ * `ALLOW_SKIP=1` says the caller knows the Harness is absent.
+ */
+const skipped = [];
+const skip = (name) => {
+  skipped.push(name);
+  console.log(`  ⏭  ${name} (not available on this machine)`);
+};
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 /**
@@ -351,5 +365,41 @@ const readSnapshot = (transform) => {
 }
 
 const failed = results.filter(([, ok]) => !ok).length;
+// ---- the bundle patch has to stay parseable -------------------------------------
+// A single mis-indented line here made YAML parsing fail, which made the whole bundle
+// fail to load: the plugin vanished from Settings and its bridge never started. Nothing
+// in the suite touched this file before, so it is checked structurally here (no YAML
+// dependency, so it also runs in CI).
+{
+  const lines = readFileSync(new URL("./cordis.patch.yml", import.meta.url), "utf8").split("\n");
+  const at = lines.findIndex((line) => /^\s*config:\s*$/u.test(line));
+  const keys = [];
+  let badIndent = [];
+  if (at >= 0) {
+    for (let i = at + 1; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (line.trim() === "") continue;
+      // Everything after `config:` in this file belongs to the config mapping, so ANY
+      // other indent is a structural error — not "the block ended". Treating a 4-space
+      // line as the end is exactly how the mis-indent slipped past the first version of
+      // this guard.
+      const indent = line.match(/^ */u)[0].length;
+      if (indent !== 8) badIndent.push(`${i + 1}:${line}`);
+      keys.push(line.trim().split(":")[0]);
+    }
+  }
+  check("cordis.patch.yml has a config block", at > 0, String(at));
+  check("every config entry is indented exactly 8 spaces", badIndent.length === 0, badIndent.join(" | "));
+  const expected = ["port", "upstream", "roots", "injectClickScript", "decorate", "anchorPrompt", "diffModifier", "hijackChip", "autoStart", "openCommand", "launchMode"];
+  check("...and ships a default for every field the schema declares", expected.every((key) => keys.includes(key)) && keys.length === expected.length, keys.join(","));
+}
+
+if (skipped.length > 0) {
+  console.log(`\n跳过 ${skipped.length} 项（${skipped.join("；")}）`);
+  if (process.env.ALLOW_SKIP !== "1") {
+    console.log("  这不算通过：本套件的关键是「每个字段都带 .volatile()」。装好 Harness 再跑，或用 ALLOW_SKIP=1 明确接受跳过。");
+    process.exit(2);
+  }
+}
 console.log(failed === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${failed}/${results.length} 项`);
 process.exit(failed === 0 ? 0 : 1);

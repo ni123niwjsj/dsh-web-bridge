@@ -1,0 +1,25 @@
+# 三轮独立审查后，能在这里自动跑的是**不需要活 DSH** 的那三个套件。
+# 另外三个（verify-host-apply 需要真的 schemastery/dsh-settings；verify-live-config 与
+# verify-plugin 需要跑着的 DSH 与 .credentials.yaml）在 CI 里会被跳过或失败 —— 见 README，
+# 它们是给本机跑的。
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax
+        run: for f in lib/*.js; do node --check "$f"; done
+      - name: Matcher, settings page, resolution and diff
+        run: |
+          node verify-click-match.mjs
+          node verify-config-page.mjs
+          node verify-resolve.mjs

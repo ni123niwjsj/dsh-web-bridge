@@ -1,6 +1,6 @@
 {
   "name": "@ni123niwjsj/dsh-web-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Serve the official DSH Web GUI on a second loopback origin so any IDE webview can embed it, and open files from the UI in your editor.",
   "license": "MIT",
   "type": "module",
@@ -27,6 +27,18 @@
   ],
   "engines": {
     "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
   },
   "exports": {
     ".": "./lib/index.js",

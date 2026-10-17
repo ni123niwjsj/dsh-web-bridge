@@ -221,7 +221,9 @@ regs = applyWith(undefined);
 const rowSummary = render(React.createElement(regs.rowConfig.component, { view: "summary" }));
 check("row summary view renders the address", JSON.stringify(rowSummary).includes("39977"));
 const rowLoading = render(React.createElement(regs.rowConfig.component, { view: "page" }));
-check("row page without a host form shows the loading notice", JSON.stringify(rowLoading).includes("正在读取配置"));
+// No form object means "this deployment serves no configuration here", not "still
+// loading" — the loading text was previously shown forever and could never resolve.
+check("row page without a host form says the row is not served", JSON.stringify(rowLoading).includes("没有向本客户端公开配置"));
 const rowUnavailable = render(React.createElement(regs.rowConfig.component, { view: "page", form: makeRowForm(base, { status: "unavailable", writable: false }) }));
 check("row page with an unavailable namespace explains itself", JSON.stringify(rowUnavailable).includes("没有向本客户端公开配置"));
 
@@ -285,7 +287,8 @@ check("host refusal is surfaced", JSON.stringify(refusedCase.tree()).includes("�
     (node.children ?? []).forEach(collect);
   };
   collect(tree);
-  check("the form renders its dropdowns as <select>", selects.length === 2, String(selects.length));
+  // Three dropdowns: launch mode, chip takeover, and the diff modifier (batch 4 / B6).
+  check("the form renders its dropdowns as <select>", selects.length === 3, String(selects.length));
   check(
     "a select is given an OPAQUE themed background, not a translucent one",
     selects.every((node) => /var\(--dsw-alias-bg-layer-\d/u.test(String(node.props.style?.background ?? ""))),

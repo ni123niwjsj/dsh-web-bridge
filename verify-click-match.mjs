@@ -114,7 +114,7 @@ check("installed a capture-phase click listener", listeners.some(([type]) => typ
  * against a bridge that only accepts `validToken`. Returns what the page did:
  * which requests it sent, which toasts it showed, whether it reloaded.
  */
-const mountAndClick = async ({ pageToken = "stale", validToken = "fresh", documentToken = "fresh", reloadAllowed = true, reply = {}, reject = false, text = "src/app.ts:3", config = {}, ua = "", framed = false } = {}) => {
+const mountAndClick = async ({ pageToken = "stale", validToken = "fresh", documentToken = "fresh", reloadAllowed = true, reply = {}, reject = false, text = "src/app.ts:3", config = {}, ua = "", framed = false, modifiers = {} } = {}) => {
   const calls = [];
   const greetings = [];
   const event = { prevented: 0, stopped: 0 };
@@ -177,6 +177,7 @@ const mountAndClick = async ({ pageToken = "stale", validToken = "fresh", docume
   await handlers[0]({
     target: element(text, {}, { click: () => { handedBack.clicks += 1; } }),
     altKey: false,
+    ...modifiers,
     preventDefault: () => { event.prevented += 1; },
     stopPropagation: () => { event.stopped += 1; },
   });
@@ -521,6 +522,124 @@ function inEditable(child, parent) {
   bare.textContent = "不再是路径了";
   matcher.sync(bare);
   check("...leaving no stray title on an element that had none", !("title" in bare.attrs), JSON.stringify(bare.attrs));
+}
+
+// ---- 回归:DSH 查看器的"标签条"把三段文字拼成了一串,曾被当成路径
+//      (真机日志原文:found=hello.html/home/dev/hello.htmlHTML via=text → no such file)
+{
+  const textNode = (value) => ({ nodeType: 3, nodeValue: value });
+  const elNode = (text, childNodes, attrs = {}) => {
+    const el = { nodeType: 1, tagName: "SPAN", textContent: text, childNodes, parentElement: null, attrs, getAttribute: (n) => (n in attrs ? attrs[n] : null), getAttributeNames: () => Object.keys(attrs) };
+    for (const child of childNodes) if (child.nodeType === 1) child.parentElement = el;
+    return el;
+  };
+
+  const tabLabel = elNode("hello.html", [textNode("hello.html")]);
+  const crumb = elNode("/home/dev/hello.html", [textNode("/home/dev/hello.html")]);
+  const badge = elNode("HTML", [textNode("HTML")]);
+  const strip = elNode("hello.html/home/dev/hello.htmlHTML", [tabLabel, crumb, badge], { role: "tablist" });
+  const closeBtn = elNode("", [], { "aria-label": "关闭" });
+  closeBtn.parentElement = strip;
+
+  check(
+    "a container that GLUES several children's text is not a path (the tab-strip bug)",
+    matcher.findTarget(strip) === undefined,
+    JSON.stringify(matcher.findTarget(strip)),
+  );
+  // 真实 DOM 是"只套一层包装、拼接源在里面":包装层只有一个元素子节点,旧规则只看直接子节点 → 放行 ✗
+  const pane = elNode("hello.html关闭/home/dev/hello.htmlHTML", [strip]);
+  check(
+    "a single wrapper AROUND the strip is rejected too (the real shape, B1 verdict)",
+    matcher.findTarget(pane) === undefined,
+    JSON.stringify(matcher.findTarget(pane)),
+  );
+  check(
+    "...while a wrapper around a plain leaf is still fine",
+    matcher.findTarget(elNode("dsh-web-bridge/lib/bridge.js", [elNode("dsh-web-bridge/lib/bridge.js", [textNode("dsh-web-bridge/lib/bridge.js")])]))?.path === "dsh-web-bridge/lib/bridge.js",
+  );
+  check(
+    "...so clicking the tab's close button no longer reports a bogus path",
+    matcher.findTarget(closeBtn) === undefined,
+    JSON.stringify(matcher.findTarget(closeBtn)),
+  );
+  check(
+    "...and the affordance does not decorate such a container either",
+    matcher.isPathElement(strip, "inline") === false,
+  );
+  check(
+    "a leaf whose text is one path still matches",
+    matcher.findTarget(elNode("dsh-web-bridge/lib/bridge.js", [textNode("dsh-web-bridge/lib/bridge.js")]))?.path === "dsh-web-bridge/lib/bridge.js",
+    JSON.stringify(matcher.findTarget(elNode("dsh-web-bridge/lib/bridge.js", [textNode("dsh-web-bridge/lib/bridge.js")]))),
+  );
+  check(
+    "...and so does a single wrapper around that leaf",
+    matcher.findTarget(elNode("dsh-web-bridge/lib/bridge.js", [elNode("dsh-web-bridge/lib/bridge.js", [textNode("dsh-web-bridge/lib/bridge.js")])]))?.path === "dsh-web-bridge/lib/bridge.js",
+  );
+  check(
+    "a paragraph with a path plus prose is refused",
+    matcher.findTarget(elNode("详见 dsh-web-bridge/lib/bridge.js 的说明", [textNode("详见 "), elNode("dsh-web-bridge/lib/bridge.js", [textNode("dsh-web-bridge/lib/bridge.js")]), textNode(" 的说明")])) === undefined,
+  );
+  // 长扩展名不再被长度上限挡掉(以前 7 个字符封顶,`.gitignore` 就被拒了)
+  check(
+    "a dot-file with a long tail is a path now (.gitignore)",
+    matcher.textTarget("/home/shuaige/code/dsh workspace/dsh-bridge/.gitignore")?.path === "/home/shuaige/code/dsh workspace/dsh-bridge/.gitignore",
+    JSON.stringify(matcher.textTarget("/home/shuaige/code/dsh workspace/dsh-bridge/.gitignore")),
+  );
+}
+
+// ---- 批次 2:用户能直接感知的五条(逗号/空格/href/菜单控件/相邻文本节点)
+{
+  const T = (v) => ({ nodeType: 3, nodeValue: v });
+  const mk = (tag, text, kids = [], attrs = {}) => {
+    const el = { nodeType: 1, tagName: tag, textContent: text, childNodes: kids, parentElement: null, attrs, getAttribute: (n) => (n in attrs ? attrs[n] : null), getAttributeNames: () => Object.keys(attrs) };
+    kids.forEach((c) => { if (c.nodeType === 1) c.parentElement = el; });
+    return el;
+  };
+
+  // E4:逗号几乎总是"并列两个路径"
+  check("a comma-joined pair is not one path", matcher.textTarget("a/b.ts, c/d.ts") === undefined, JSON.stringify(matcher.textTarget("a/b.ts, c/d.ts")));
+  check("...but a single trailing comma is still fine", matcher.textTarget("a/b.ts,")?.path === "a/b.ts", JSON.stringify(matcher.textTarget("a/b.ts,")));
+
+  // F8:扩展名后紧跟空格 = 两个路径
+  check("two paths separated by a space are not one path", matcher.textTarget("src/a.ts src/b.ts") === undefined, JSON.stringify(matcher.textTarget("src/a.ts src/b.ts")));
+  check("...while a directory name with a space still works", matcher.textTarget("/home/shuaige/code/dsh workspace/测试清单.md")?.path === "/home/shuaige/code/dsh workspace/测试清单.md");
+
+  // F9:相邻文本节点是【一个】来源,不是拼接
+  const splitLeaf = mk("CODE", "a/b.md", [T("a/"), T("b.md")]);
+  check("a path split across two text nodes is clickable again", matcher.findTarget(splitLeaf)?.path === "a/b.md", JSON.stringify(matcher.findTarget(splitLeaf)));
+
+  // E6:href 只在"像文件"时才当路径
+  const asLink = (href) => mk("A", "docs", [T("docs")], { href });
+  check("an in-app route href is left alone", matcher.findTarget(asLink("/docs/guide.html")) === undefined, JSON.stringify(matcher.findTarget(asLink("/docs/guide.html"))));
+  check("a relative href is a file reference", matcher.findTarget(asLink("./src/app.ts"))?.path === "./src/app.ts");
+  // A `file:` URL is allowed through the href guard, but the path regex still wants a
+  // path shape, so it resolves to nothing rather than to a wrong file. Recorded as a
+  // known limitation instead of an assertion that would encode it as intended.
+  const savedRoots = sandbox.window.__DSH_BRIDGE__.roots;
+  sandbox.window.__DSH_BRIDGE__.roots = ["/home/shuaige/code/dsh workspace"];
+  check("an absolute href under a configured root is a file reference", matcher.findTarget(asLink("/home/shuaige/code/dsh workspace/dsh-web-bridge/.gitignore"))?.path !== undefined);
+  check("...and one outside every root is not", matcher.findTarget(asLink("/etc/hosts.md")) === undefined);
+  sandbox.window.__DSH_BRIDGE__.roots = savedRoots;
+
+  // F4:开菜单的控件整体跳过
+  const picker = mk("BUTTON", "a.md", [T("a.md")], { "aria-haspopup": "menu", "data-review-file": "/home/x/a.md" });
+  check("a control that opens a menu is not treated as a file reference", matcher.findTarget(picker) === undefined, JSON.stringify(matcher.findTarget(picker)));
+  const plain = mk("BUTTON", "a.md", [T("a.md")], { "data-review-file": "/home/x/a.md" });
+  check("...while a plain path-bearing button still is", matcher.findTarget(plain)?.path === "/home/x/a.md", JSON.stringify(matcher.findTarget(plain)));
+}
+
+// ---- 批次 4:diff 修饰键(B6)与脚本修订号(D1)
+{
+  /** The open/diff endpoint a run actually asked for (the report POST comes first). */
+  const askedFor = (run) => run.calls.filter((c) => c?.url === "/__bridge/diff" || c?.url === "/__bridge/open").map((c) => c.url);
+  const viaCtrl = await mountAndClick({ config: { diffModifier: "ctrl" }, modifiers: { ctrlKey: true } });
+  check("diffModifier=ctrl makes Ctrl+click ask for a diff", askedFor(viaCtrl)[0] === "/__bridge/diff", JSON.stringify(askedFor(viaCtrl)));
+  const viaAlt = await mountAndClick({ config: { diffModifier: "ctrl" }, modifiers: { altKey: true } });
+  check("...and Alt+click no longer does (the configured mode is honoured)", askedFor(viaAlt)[0] === "/__bridge/open", JSON.stringify(askedFor(viaAlt)));
+  const byDefault = await mountAndClick({ modifiers: { altKey: true } });
+  check("...while the default (alt) still opens a diff on Alt+click", askedFor(byDefault)[0] === "/__bridge/diff", JSON.stringify(askedFor(byDefault)));
+  const withRev = await mountAndClick({ config: { clientRev: "abc12345" } });
+  check("the hello report carries the click-script revision (D1)", JSON.stringify(withRev.greetings).includes("abc12345"), JSON.stringify(withRev.greetings));
 }
 
 const failed = results.filter(([, ok]) => !ok).length;

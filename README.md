@@ -112,7 +112,10 @@ Two ways to switch the decoration off **without a restart**: `decorate: false` i
 Two deliberate boundaries:
 
 - **A path buried inside a sentence is not recognized** (the whole text has to be the path). The rule was tightened by a real false positive: the status line `168 tok/s69.3M tok` was nearly opened as a file.
-- **Spaces and non-ASCII letters are recognised**: a path segment may hold **non-ASCII letters** (`测试清单.md`) and **single spaces** (`dsh workspace`); in the attribute channel a space is only allowed from the **second segment on**, or the prose in front of a path gets swallowed (`Read src/api/server.ts` would match from `Read`). The hard guard is a different rule: **the first character after the dot must be a letter**, which is why `168 tok/s69.3M tok` is still refused.
+- **Spaces and non-ASCII letters are recognised**: a path segment may hold **non-ASCII letters** (`测试清单.md`) and **single spaces** (`dsh workspace`); in the attribute channel a space is only allowed from the **second segment on**, or the prose in front of a path gets swallowed (`Read src/api/server.ts` would match from `Read`).
+- **An element's text must have a single source**: `textContent` is every descendant's text glued together, so walking up to an ancestor can spell a path by accident. DSH's file viewer did exactly that — its tab strip holds the label `hello.html`, the breadcrumb `/home/dev/hello.html` and the badge `HTML`, and the concatenation `hello.html/home/dev/hello.htmlHTML` made every click anywhere in that strip report "no such file". Only an element whose text has one source (a leaf, or a single wrapper around one) is now read as a path.
+- **Dot-files are recognised**: `/tmp/x/.gitignore` has no stem before its extension, which the old shape demanded.
+- The guards are the **letter right after the dot** (which is why `168 tok/s69.3M tok` is refused) and the single-source rule above; the extension length is no longer a criterion (it is 16 now).
 - **The subdirectory fallback is one level deep**: `<root>/*/path` resolves, `<root>/*/*/path` does not. Two levels widen the room for a wrong guess; add it when a real case shows up.
 
 DSH's own chip is a **separate path**: its resolver matches verbatim (the token must equal a path produced this turn, or the unique basename of one), so a `:399` suffix never becomes a chip; and what it opens is DSH's own preview tab, whose opener takes a path and **no line**. So for "jump to line N" the reliable route is always the injected script.
@@ -171,7 +174,7 @@ Opening a file prefers the editor CLI (`code -r -g`) and falls back to the deskt
 
 **What this revision fixed (after an external code review)**
 
-- **The bridge has a fence of its own now.** `Host` must be `127.0.0.1:<port>` / `localhost:<port>`, and any request carrying a **foreign `Origin`** is refused with 403 — on the **HTTP and the WebSocket upgrade paths alike** (a browser always sends `Origin` on a WS handshake, and WS gets no CORS protection). An origin-less request is a navigation or a subresource and is allowed: it can read nothing, and DNS rebinding is caught by the `Host` rule above. The upgrade handler used to strip `Origin`/`Sec-Fetch-Site` and forward, and DSH's fence treats "no Origin" as trusted, so **any web page could speak to `/api/remote.mux` as the operator**. A malformed `Host` could also throw synchronously inside the request listener, which DSH's fail-loud handler turns into `process.exit(1)`. Now the listener is wrapped, the handler chain has a `.catch`, an invalid `openCommand` fails instead of throwing, and the request body is bounded and abort-tolerant: **every failure degrades to a warning or a 500, never to a dead session.**
+- **The bridge has a fence of its own now.** `Host` must be `127.0.0.1:<port>` / `localhost:<port>`; any request carrying a **foreign `Origin`**, or a `Sec-Fetch-Site: cross-site` subresource (a cross-site *document* navigation is still allowed, so a link or a pasted URL can never lock the IDE's own page out), is refused with 403 — on the **HTTP and the WebSocket upgrade paths alike** (a browser always sends `Origin` on a WS handshake, and WS gets no CORS protection). An origin-less request is a navigation or a subresource and is allowed: it can read nothing, and DNS rebinding is caught by the `Host` rule above. The upgrade handler used to strip `Origin`/`Sec-Fetch-Site` and forward, and DSH's fence treats "no Origin" as trusted, so **any web page could speak to `/api/remote.mux` as the operator**. A malformed `Host` could also throw synchronously inside the request listener, which DSH's fail-loud handler turns into `process.exit(1)`. Now the listener is wrapped, the handler chain has a `.catch`, an invalid `openCommand` fails instead of throwing, and the request body is bounded and abort-tolerant: **every failure degrades to a warning or a 500, never to a dead session.**
 - **The token is back to being a CSRF token**: header only (a query token leaks into history, logs and `Referer`), and a token must be configured at start (both sides `undefined` used to compare equal).
 - **The diff is real**: `--diff` was never passed, and an Alt+click launched the same command **twice** (the standalone sibling always had it right). It is now one `code -r --diff <HEAD snapshot> <file>`, degrading to a plain open only on failure.
 - **No more leaked listeners**: `start()`/`adopt()` share one serial queue (the old `start()` only checked `handle`, which is assigned two awaits later, so two quick saves left several servers listening).
@@ -205,21 +208,37 @@ Opening a file prefers the editor CLI (`code -r -g`) and falls back to the deskt
 
 ```bash
 for f in lib/*.js; do node --check "$f"; done   # one at a time: extra args are script arguments
-node verify-click-match.mjs    # matcher (anchors, CJK, spaces), token self-heal, the affordance, the toast, takeover states and hand-back (89 checks)
+
+# CI (.github/workflows/checks.yml) runs the three suites that need NO live DSH:
+#   verify-click-match · verify-config-page · verify-resolve
+# The other three are for a machine that has one: verify-host-apply needs the real
+# schemastery/dsh-settings, and verify-live-config / verify-plugin need a running DSH
+# plus $DSH_HOME/.credentials.yaml.
+node verify-click-match.mjs    # matcher (anchors, CJK, spaces, dot-files, concatenations refused), token self-heal, the affordance, the toast, takeover states and hand-back (96 checks)
 node verify-host-apply.mjs     # host half: volatile marks, the settings gate, live reads, session roots, token derivation, the prompt section (35 checks)
-node verify-resolve.mjs        # resolution, the echo, anchors, the injected page config, a real diff launched once, scratch cleanup (49 checks)
+node verify-resolve.mjs        # resolution, the echo, anchors, the injected page config, a real diff (twice, with pruning), header hygiene (55 checks)
 node verify-live-config.mjs    # real bridge: saved changes, relative paths, token stability, and no listener leaked by two quick saves (24 checks)
 node verify-config-page.mjs    # both client seats, the writes they emit, the control colours (33 checks)
 node verify-plugin.mjs 39989   # the bridge's own fence, its fatal paths and the self-test (22 checks; needs a live DSH)
 node verify-support.mjs        # self-check: can the Harness's own schemastery / dsh-settings be found
-# 252 checks in total
+# 281 checks in total
 ```
 
-The verification scripts (including `verify-support.mjs`) are not in `files` and never ship. `lib/bridge.js` and `dsh-bridge/dsh-bridge-proxy.mjs` are two shapes of the same logic (in-plugin and standalone) and must be changed together. Their **one deliberate difference**: the in-plugin bridge accepts a `roots` provider function (it can ask the session store), while the standalone has no session store and relies on `--root`.
+The verification scripts (including `verify-support.mjs`) are not in `files` and never ship. `lib/bridge.js` and `dsh-bridge/dsh-bridge-proxy.mjs` are two shapes of the same logic (in-plugin and standalone) and must be changed together — but they are **not** identical: the standalone is a functional **subset**. Missing there: the `roots` provider (no session store, so it relies on `--root` and never adds `$HOME`), anchors and the `#L`/`:line` suffixes, the one-level directory fallback, `resolvedBy`/`root`/`candidates` in the reply, and the newest recognition rules in `bridge-client.js` (porting them is queued). The plugin, in turn, has no `/__bridge/test` or `/__bridge/token`.
 
 </details>
 
-**Runtime invariants:** the plugin listens on loopback only, and **trusts nothing but its own origin** (the `Host` must be one of its own names, a foreign `Origin` or `Sec-Fetch-Site: cross-site` is refused with 403 on HTTP and on the WebSocket upgrade alike); `ctx.effect` closes the bridge on unload; it adds no persistent state, and its only writes are the per-instance scratch root described above.
+**Runtime invariants:** the plugin listens on loopback only and **trusts nothing but its own origin**:
+
+- the `Host` must be one of its own names (this is what stops DNS rebinding);
+- a foreign `Origin` is refused with 403 on HTTP **and** on the WebSocket upgrade;
+- a `Sec-Fetch-Site: cross-site` subresource is refused; a cross-site **document** navigation is allowed, so an IDE page can never be locked out of its own bridge;
+- on the **proxy** path a state-changing request (anything but GET/HEAD) must carry this bridge's own `Origin` — a browser always sends it, and it is what stops a local process from driving the full GUI API with no credential. It injects the operator's session cookie into everything it forwards, so this check is the whole boundary. The `/__bridge/*` diagnostics are exempt on purpose: they authenticate with the token, and a token is a credential (`curl -H "x-bridge-token: …"` keeps working).
+  **What the token actually is:** the diagnostics need it, and `/__bridge/open` answers with the text of the target line — so a token is effectively *read any line of any file* on this machine, and it is inlined into every page the bridge serves. Treat it as a file-read credential, not merely as CSRF protection.
+
+**Residual risk, stated plainly:** a *local process of another user* can forge `Origin`, so on a shared machine the loopback listener is still an escalation path — such a process cannot read your `~/.dsh` credentials, but it can use this port. Single-user machines are unaffected.
+
+`ctx.effect` closes the bridge on unload; it adds no persistent state, and its only writes are the per-instance scratch root described above.
 
 **About the token (a real failure this had):** the token guarding the bridge endpoints is **derived** from the durable signing secret (`deriveToken`), never random per activation — because a page outlives the bridge: restarting DSH remounts the plugin, and a loaded document can only learn a new token by being reloaded. Everything else survives (the proxied UI needs no token), so the symptom is "the UI looks alive and every click silently 403s". A derived token is the same for one Harness home forever: across restarts, remounts and plugin upgrades. The cost is that it cannot rotate on its own (rotate the DSH browser-session secret instead). The injected script adds one more layer: on a 403 it re-reads this document's HTML for a newer token and retries once, and only reloads the page (once per 20s) when that is impossible.
 
