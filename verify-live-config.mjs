@@ -59,6 +59,7 @@ const listening = (port) =>
 
 /** The smallest host context this plugin needs: credentials, an index tap, effects, events. */
 const makeHost = () => {
+  const cleanups = [];
   const taps = [];
   const listeners = new Map();
   const warnings = [];
@@ -71,7 +72,10 @@ const makeHost = () => {
       return () => {};
     },
     effect: (run) => {
-      run();
+      // Collect the cleanup instead of dropping it: "unload closes the bridge" is an
+      // invariant of this plugin and used to have no assertion at all.
+      const off = run();
+      if (typeof off === "function") cleanups.push(off);
       return () => {};
     },
     credentials: { readRecord: async () => ({ payload: { secret } }) },
@@ -98,7 +102,12 @@ const makeHost = () => {
     }
     throw new Error(`timed out waiting for ${label}: ${JSON.stringify(snapshot())}`);
   };
-  return { ctx, snapshot, emit, waitFor, warnings };
+  return {
+    /** Run every collected cleanup, i.e. what unloading the plugin does. */
+    dispose: async () => {
+      for (const off of cleanups.reverse()) await off();
+    },
+ctx, snapshot, emit, waitFor, warnings };
 };
 
 const first = await freePort();
@@ -342,6 +351,26 @@ check("turning it back on restarts it on the live port", await listening(second)
   const alive = { a: await listening(portA), b: await listening(portB), c: await listening(portC) };
   check("two rapid port saves settle on the last port", alive.c === true, JSON.stringify(alive));
   check("...and leave no orphan listener behind", alive.a === false && alive.b === false, JSON.stringify(alive));
+}
+
+// ---- unloading the plugin must actually close the listener. The fake ctx used to drop
+//      every effect cleanup, so this invariant had no assertion at all.
+{
+  const port = await freePort();
+  const host = makeHost();
+  apply(host.ctx, {
+    port: volatile(port).ref,
+    upstream: volatile("127.0.0.1:9").ref,
+    roots: volatile([]).ref,
+    autoStart: volatile(true).ref,
+    openCommand: volatile("code").ref,
+    launchMode: volatile("editor").ref,
+  });
+  await host.waitFor((state) => state?.state === "running" && state.port === port, "a running bridge before unload");
+  check("a running bridge listens before unload", (await listening(port)) === true);
+  await host.dispose();
+  await sleep(400);
+  check("unloading the plugin closes the bridge", (await listening(port)) === false);
 }
 
 const failed = results.filter(([, ok]) => !ok).length;

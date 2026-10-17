@@ -12,7 +12,7 @@ import { createServer as createHttp } from "node:http";
 import { execFileSync } from "node:child_process";
 import { connect } from "node:net";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -332,6 +332,10 @@ write(join(scratch, name("PLAIN", "txt")), "not a match\n");
 
   await new Promise((done) => upstream.close(done));
 }
+
+// The fixtures live in one scratch directory; leaving it behind used to be the suite's
+// only lasting side effect (ten of them per run across all suites, see docs/TODO.md).
+rmSync(scratch, { recursive: true, force: true });
 
 const failed = results.filter(([, ok]) => !ok).length;
 console.log(failed === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${failed}/${results.length} 项`);
