@@ -33,11 +33,9 @@ const element = (text, attrs = {}, extra = {}) => ({
   ...extra,
 });
 
-const results = [];
-const check = (name, ok, detail = "") => {
-  results.push([name, ok]);
-  console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}`);
-};
+import { createChecks } from "./verify-support.mjs";
+
+const { results, check, summary } = createChecks();
 
 // The exact false positive recorded in /__bridge/log on 2026-10-15 12:54:46.
 const falsePositive =
@@ -642,6 +640,4 @@ function inEditable(child, parent) {
   check("the hello report carries the click-script revision (D1)", JSON.stringify(withRev.greetings).includes("abc12345"), JSON.stringify(withRev.greetings));
 }
 
-const failed = results.filter(([, ok]) => !ok).length;
-console.log(failed === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${failed}/${results.length} 项`);
-process.exit(failed === 0 ? 0 : 1);
+process.exit(summary() === 0 ? 0 : 1);

@@ -7,6 +7,7 @@
 //
 //   node verify-support.mjs        # self-check: reports what was found
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -37,6 +38,40 @@ const scopeCandidates = () => {
  * @param name - package name inside the `@deepseek-ai` scope, e.g. `schemastery`.
  * @returns the module URL, or undefined when this machine has no Harness install.
  */
+/**
+ * The check accumulator every suite used to carry its own copy of.
+ *
+ * Six copies had drifted in formatting, and one of them silently dropped skipped checks.
+ * One implementation means one summary shape, one exit-code rule, and no suite that
+ * "passes" while printing nothing.
+ * @returns `{ results, check, failed, summary }`; `summary()` also returns the failure count.
+ */
+export const createChecks = () => {
+  const results = [];
+  const check = (name, ok, detail = "") => {
+    results.push([name, Boolean(ok)]);
+    console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}`);
+  };
+  const failed = () => results.filter(([, ok]) => !ok).length;
+  const summary = () => {
+    const bad = failed();
+    console.log(bad === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${bad}/${results.length} 项`);
+    return bad;
+  };
+  return { results, check, failed, summary };
+};
+
+/** A port that was free a moment ago: bind :0, read it back, release it. */
+export const freePort = () =>
+  new Promise((settle, fail) => {
+    const server = createServer();
+    server.once("error", fail);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => settle(typeof address === "object" && address !== null ? address.port : 0));
+    });
+  });
+
 export const locateHarness = (name) => {
   for (const scope of scopeCandidates()) {
     const dir = join(scope, name);

@@ -111,12 +111,9 @@ const applyWith = (forms) => {
 };
 
 // ---------------------------------------------------------------- assertions
-const results = [];
-const check = (name, ok, detail = "") => {
-  results.push([name, ok]);
-  console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}`);
-};
+import { createChecks } from "./verify-support.mjs";
 
+const { results, check, summary } = createChecks();
 const ROW_KEY = "@ni123niwjsj/dsh-web-bridge#dsh-web-bridge";
 const ROW = "dsh-web-bridge";
 const base = { port: 39977, upstream: "127.0.0.1:3080", roots: [], injectClickScript: true, decorate: true, hijackChip: "off", autoStart: true, openCommand: "code", launchMode: "auto" };
@@ -307,6 +304,4 @@ check("host refusal is surfaced", JSON.stringify(refusedCase.tree()).includes("�
   );
 }
 
-const failed = results.filter(([, ok]) => !ok).length;
-console.log(failed === 0 ? `\n全部通过（${results.length} 项）` : `\n失败 ${failed}/${results.length} 项`);
-process.exit(failed === 0 ? 0 : 1);
+process.exit(summary() === 0 ? 0 : 1);
