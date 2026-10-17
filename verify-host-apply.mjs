@@ -207,6 +207,18 @@ const readSnapshot = (transform) => {
   );
 }
 
+// The guidance changes model behaviour in every session, so its switch has to be real:
+// with `anchorPrompt: false` nothing may be registered at all.
+{
+  const { ctx, promptSections } = makeCtx({ settings: settingsStub() });
+  apply(ctx, { autoStart: false, anchorPrompt: false });
+  check(
+    "anchorPrompt: false registers NO guidance section",
+    promptSections.length === 0,
+    JSON.stringify(promptSections.map((entry) => entry.name)),
+  );
+}
+
 {
   const { ctx, warnings, promptSections } = makeCtx({ settings: settingsStub(), systemPromptThrows: true });
   let threw;
